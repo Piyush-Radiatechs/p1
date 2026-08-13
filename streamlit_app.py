@@ -154,7 +154,7 @@ def main() -> None:
 
     with st.sidebar:
         st.header("API Keys")
-        st.write(f"Mistral (.env): {'✅' if settings.mistral_configured else '❌ Not configured'}")
+        st.write(f"Mistral: {'✅' if settings.mistral_configured else '❌ Not configured'}")
         serpapi_key = st.text_input(
             "Your SerpApi Key",
             type="password",
@@ -176,7 +176,11 @@ def main() -> None:
 
     if search_clicked and uploaded is not None:
         if not settings.mistral_configured:
-            st.error("MISTRAL_API_KEY is not configured. Add it to your .env file.")
+            st.error(
+                "MISTRAL_API_KEY is not configured. "
+                "Add it to Streamlit Cloud Secrets (Manage app → Settings → Secrets) "
+                "or to a local .env file."
+            )
             return
         if not serpapi_key.strip():
             st.error("Please enter your SerpApi key in the sidebar.")

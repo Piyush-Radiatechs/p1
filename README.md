@@ -89,6 +89,24 @@ curl -X POST "http://127.0.0.1:8000/search-candidates" `
 }
 ```
 
+## Streamlit Cloud secrets
+
+GitHub Actions secrets are **not** used by Streamlit Cloud.
+
+On the deployed app, open **Manage app → Settings → Secrets** and add:
+
+```toml
+MISTRAL_API_KEY = "your_mistral_key"
+MISTRAL_MODEL = "mistral-small-latest"
+MAX_QUERIES_PER_JD = 5
+MAX_RESULTS_PER_QUERY = 10
+GOOGLE_DOMAIN = "google.com"
+GOOGLE_GL = "us"
+GOOGLE_HL = "en"
+```
+
+Then reboot the app. SerpApi can stay as a sidebar input, or you can also add `SERPAPI_KEY` here.
+
 ## Run Tests
 
 ```powershell
