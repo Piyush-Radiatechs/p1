@@ -6,7 +6,7 @@ import fitz
 import pytest
 
 from app.models.jd import ExperienceRange, JobRequirements
-from app.services.pipeline import process_jd_pdf
+from app.services.pipeline import process_jd_pdf, process_jd_text
 from app.services.search_service import SearchProvider
 
 
@@ -72,3 +72,26 @@ async def test_pipeline_with_mocks():
     assert result["candidates_found"] == 1
     assert result["candidates"][0]["linkedin_url"] == "https://www.linkedin.com/in/windchill-dev"
     assert len(result["search_results"]) == 2 * result["searches_run"]
+
+
+@pytest.mark.asyncio
+async def test_pipeline_from_pasted_text():
+    mock_provider = MockSearchProvider()
+    jd_text = (
+        "Windchill Developer / PLM Developer. Location: Texas, Dallas. "
+        "3-8 years experience. Skills: Windchill, PDMLink, Java, OIR."
+    )
+
+    with patch(
+        "app.services.pipeline.extract_job_requirements",
+        new=AsyncMock(return_value=MOCK_REQUIREMENTS),
+    ):
+        result = await process_jd_text(
+            jd_text,
+            filename="pasted_jd.txt",
+            search_provider=mock_provider,
+        )
+
+    assert result["filename"] == "pasted_jd.txt"
+    assert result["candidates_found"] == 1
+    assert all("site:linkedin.com/in/" in q for q in result["queries"])

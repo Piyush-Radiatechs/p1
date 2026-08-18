@@ -14,7 +14,7 @@ import streamlit as st
 
 from app.config import get_settings
 from app.exceptions import AppError
-from app.services.pipeline import process_jd_pdf
+from app.services.pipeline import process_jd_file, process_jd_text
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -50,12 +50,21 @@ def _format_experience(requirements: dict) -> str:
     return "Not specified"
 
 
-def _run_pipeline(pdf_bytes: bytes, filename: str, serpapi_key: str) -> dict:
-    # Pass the UI-provided SerpApi key into the search pipeline.
+def _run_pipeline_from_file(file_bytes: bytes, filename: str, serpapi_key: str) -> dict:
     return asyncio.run(
-        process_jd_pdf(
-            pdf_bytes,
+        process_jd_file(
+            file_bytes,
             filename=filename,
+            serpapi_key=serpapi_key,
+        )
+    )
+
+
+def _run_pipeline_from_text(jd_text: str, serpapi_key: str) -> dict:
+    return asyncio.run(
+        process_jd_text(
+            jd_text,
+            filename="pasted_jd.txt",
             serpapi_key=serpapi_key,
         )
     )
@@ -148,8 +157,8 @@ def main() -> None:
 
     st.title("AI Candidate Search")
     st.caption(
-        "Upload a Job Description PDF to extract requirements, generate X-Ray queries, "
-        "and discover LinkedIn profiles via Google search."
+        "Upload a Job Description (PDF, Word, or text) or paste the JD to extract "
+        "requirements, generate X-Ray queries, and discover LinkedIn profiles via Google search."
     )
 
     with st.sidebar:
@@ -166,15 +175,35 @@ def main() -> None:
         st.write(f"Max queries per JD: {settings.max_queries_per_jd}")
         st.write(f"Max results per query: {settings.max_results_per_query}")
 
-    uploaded = st.file_uploader("Upload Job Description PDF", type=["pdf"])
+    source = st.radio(
+        "Job description source",
+        options=["Upload file", "Enter text"],
+        horizontal=True,
+    )
 
+    uploaded = None
+    pasted_text = ""
+    if source == "Upload file":
+        uploaded = st.file_uploader(
+            "Upload Job Description",
+            type=["pdf", "docx", "txt"],
+            help="Accepted formats: PDF, Word (.docx), or plain text (.txt).",
+        )
+    else:
+        pasted_text = st.text_area(
+            "Paste Job Description",
+            height=280,
+            placeholder="Paste the full job description here...",
+        )
+
+    has_input = uploaded is not None or bool(pasted_text.strip())
     search_clicked = st.button(
         "Search Candidates",
         type="primary",
-        disabled=uploaded is None,
+        disabled=not has_input,
     )
 
-    if search_clicked and uploaded is not None:
+    if search_clicked and has_input:
         if not settings.mistral_configured:
             st.error(
                 "MISTRAL_API_KEY is not configured. "
@@ -186,18 +215,23 @@ def main() -> None:
             st.error("Please enter your SerpApi key in the sidebar.")
             return
 
-        pdf_bytes = uploaded.read()
-        if not pdf_bytes:
-            st.error("Uploaded file is empty.")
-            return
-
         with st.spinner("Processing job description and searching candidates..."):
             try:
-                result = _run_pipeline(
-                    pdf_bytes,
-                    filename=uploaded.name,
-                    serpapi_key=serpapi_key.strip(),
-                )
+                if uploaded is not None:
+                    file_bytes = uploaded.read()
+                    if not file_bytes:
+                        st.error("Uploaded file is empty.")
+                        return
+                    result = _run_pipeline_from_file(
+                        file_bytes,
+                        filename=uploaded.name,
+                        serpapi_key=serpapi_key.strip(),
+                    )
+                else:
+                    result = _run_pipeline_from_text(
+                        pasted_text,
+                        serpapi_key=serpapi_key.strip(),
+                    )
                 st.session_state["search_result"] = result
             except AppError as exc:
                 logger.error("Pipeline error: %s", exc.message)

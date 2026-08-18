@@ -10,9 +10,13 @@ class AppError(Exception):
         self.status_code = status_code
 
 
-class PDFExtractionError(AppError):
+class DocumentExtractionError(AppError):
     def __init__(self, message: str):
         super().__init__(message, status_code=400)
+
+
+class PDFExtractionError(DocumentExtractionError):
+    pass
 
 
 class JDExtractionError(AppError):
