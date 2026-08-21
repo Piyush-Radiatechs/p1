@@ -2,7 +2,7 @@
 
 from app.models.jd import ExperienceRange, JobRequirements
 from app.services.query_generator import LINKEDIN_XRAY_SITE, generate_xray_queries
-from app.utils.text_utils import expand_locations
+from app.utils.text_utils import expand_locations, merge_jd_locations
 
 
 SAMPLE_REQUIREMENTS = JobRequirements(
@@ -53,7 +53,12 @@ def test_max_queries_respected():
 
 
 def test_expand_locations_splits_country():
-    assert expand_locations(["Texas, US", "Dallas"]) == ["Texas", "Dallas"]
+    assert expand_locations(["Texas, US", "Dallas"]) == ["Texas", "United States", "Dallas"]
+
+
+def test_expand_locations_keeps_country_only_usa():
+    assert expand_locations(["USA"]) == ["United States"]
+    assert expand_locations(["Canada", "Mexico"]) == ["Canada", "Mexico"]
 
 
 def test_does_not_quote_texas_us_as_single_phrase():
@@ -66,3 +71,31 @@ def test_does_not_quote_texas_us_as_single_phrase():
     combined = " ".join(queries)
     assert '"Texas, US"' not in combined
     assert "Texas" in combined
+    assert "United States" in combined
+
+
+def test_queries_include_all_jd_countries_with_usa_first():
+    req = JobRequirements(
+        job_titles=["SAP FICO Consultant"],
+        technical_skills=["SAP FICO", "SAP S/4HANA", "RAR"],
+        locations=["Canada", "Mexico"],
+        experience=ExperienceRange(min_years=8),
+        exclusions=["intern", "fresher"],
+    )
+    req.locations = merge_jd_locations(
+        req.locations,
+        "Location: USA. US Based. Green card, US citizen. Travel to US, Canada & Mexico. 8+ years.",
+    )
+    assert req.locations[0] == "United States"
+    assert "Canada" in req.locations
+    assert "Mexico" in req.locations
+
+    queries = generate_xray_queries(req, max_queries=5)
+    combined = " ".join(queries)
+    assert "United States" in combined
+    assert "Canada" in combined
+    assert "Mexico" in combined
+    assert "(Senior OR Lead OR SME)" in combined or "Senior" in combined
+    assert "-internship" in combined
+    assert "-intern" in combined
+    assert "-fresher" in combined

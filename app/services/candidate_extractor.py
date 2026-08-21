@@ -26,6 +26,12 @@ EXCLUDED_PATH_PREFIXES = (
     "/groups/",
 )
 
+_JUNIOR_TITLE_RE = re.compile(
+    r"\b(intern(?:ship|ships|s)?|fresher|trainee|apprentice|entry[-\s]?level|"
+    r"graduate (?:trainee|hire)|campus hire)\b",
+    re.IGNORECASE,
+)
+
 
 def normalize_linkedin_url(url: str) -> str | None:
     """Normalize a LinkedIn profile URL or return None if not a valid /in/ profile."""
@@ -69,8 +75,15 @@ def is_linkedin_profile_url(url: str) -> bool:
     return normalize_linkedin_url(url) is not None
 
 
+def is_junior_profile_title(title: str) -> bool:
+    """True when the search-result title is clearly an intern/fresher/entry role."""
+    return bool(_JUNIOR_TITLE_RE.search(title or ""))
+
+
 def extract_candidates_from_results(
     search_results: list[dict],
+    *,
+    drop_junior_titles: bool = False,
 ) -> list[Candidate]:
     """Filter search results to unique LinkedIn /in/ profile candidates."""
     by_url: dict[str, Candidate] = {}
@@ -81,8 +94,11 @@ def extract_candidates_from_results(
         if not normalized:
             continue
 
-        query = result.get("query", "")
         title = result.get("title") or ""
+        if drop_junior_titles and is_junior_profile_title(title):
+            continue
+
+        query = result.get("query", "")
         snippet = result.get("snippet") or ""
         position = result.get("position")
 

@@ -55,7 +55,11 @@ async def process_jd_text(
         logger.exception("Unexpected search error")
         raise AppError(f"Search failed: {exc}", status_code=502) from exc
 
-    candidates = extract_candidates_from_results(search_results)
+    min_years = requirements.experience.min_years if requirements.experience else None
+    candidates = extract_candidates_from_results(
+        search_results,
+        drop_junior_titles=min_years is not None and min_years >= 3,
+    )
 
     return {
         "filename": filename,

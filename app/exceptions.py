@@ -32,3 +32,13 @@ class SearchError(AppError):
 class QuotaExceededError(SearchError):
     def __init__(self, message: str = "SerpApi quota or rate limit exceeded."):
         super().__init__(message, status_code=429)
+
+
+class AuthError(AppError):
+    def __init__(self, message: str):
+        super().__init__(message, status_code=401)
+
+
+class DatabaseError(AppError):
+    def __init__(self, message: str, *, status_code: int = 500):
+        super().__init__(message, status_code=status_code)

@@ -6,15 +6,18 @@ opens the profile URL in the user's browser — no automated LinkedIn access.
 
 import asyncio
 import logging
-import re
 from io import StringIO
 
 import pandas as pd
 import streamlit as st
 
 from app.config import get_settings
-from app.exceptions import AppError
+from app.db import init_db
+from app.exceptions import AppError, AuthError, DatabaseError
+from app.services.auth_service import login_user, register_user
+from app.services.history_service import list_searches, load_search, save_search
 from app.services.pipeline import process_jd_file, process_jd_text
+from app.utils.text_utils import display_name_from_title
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -25,16 +28,6 @@ st.set_page_config(
     page_icon="🔍",
     layout="wide",
 )
-
-
-def _display_name_from_title(title: str) -> str:
-    if not title:
-        return "Unknown"
-    cleaned = re.sub(r"\s*[|\-–—]\s*LinkedIn.*$", "", title, flags=re.IGNORECASE)
-    for sep in [" | ", " – ", " — ", " - "]:
-        if sep in cleaned:
-            return cleaned.split(sep)[0].strip()
-    return cleaned.strip() or "Unknown"
 
 
 def _format_experience(requirements: dict) -> str:
@@ -76,7 +69,7 @@ def _candidates_dataframe(candidates: list[dict]) -> pd.DataFrame:
         title = candidate.get("title") or ""
         rows.append(
             {
-                "Name / Title": _display_name_from_title(title),
+                "Name / Title": display_name_from_title(title),
                 "Search Title": title,
                 "LinkedIn URL": candidate.get("linkedin_url") or "",
                 "Snippet": candidate.get("snippet") or "",
@@ -136,7 +129,7 @@ def _render_candidates(candidates: list[dict]) -> None:
 
     for candidate in candidates:
         title = candidate.get("title", "")
-        name = _display_name_from_title(title)
+        name = display_name_from_title(title)
         snippet = candidate.get("snippet") or ""
         url = candidate.get("linkedin_url", "")
 
@@ -152,28 +145,133 @@ def _render_candidates(candidates: list[dict]) -> None:
         st.link_button("Open LinkedIn", url, type="primary")
 
 
-def main() -> None:
-    settings = get_settings()
+def _render_result_section(result: dict) -> None:
+    st.divider()
+    st.subheader("Search Summary")
+    summary_col1, summary_col2, summary_col3 = st.columns(3)
+    summary_col1.metric("Searches used", result.get("searches_run", 0))
+    summary_col2.metric("Unique profiles", result.get("candidates_found", 0))
+    raw_count = result.get("raw_results_count")
+    if raw_count is None:
+        raw_count = len(result.get("search_results") or [])
+    summary_col3.metric("Raw results", raw_count)
 
+    with st.expander("JD Summary", expanded=True):
+        _render_requirements(result.get("requirements") or {})
+
+    with st.expander("Generated X-Ray Queries", expanded=False):
+        _render_queries(result.get("queries") or [])
+
+    candidates = result.get("candidates") or []
+    st.subheader("Candidate Results")
+    st.write(f"**{result.get('candidates_found', 0)} candidates found**")
+
+    if candidates:
+        df = _candidates_dataframe(candidates)
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
+        csv_buffer = StringIO()
+        df.to_csv(csv_buffer, index=False)
+        st.download_button(
+            label="Download candidates table (CSV)",
+            data=csv_buffer.getvalue(),
+            file_name="candidates.csv",
+            mime="text/csv",
+            type="secondary",
+        )
+
+    _render_candidates(candidates)
+
+
+def _current_user() -> dict | None:
+    user = st.session_state.get("user")
+    if user and user.get("id") and user.get("username"):
+        return user
+    return None
+
+
+def _logout() -> None:
+    st.session_state.pop("user", None)
+    st.session_state.pop("search_result", None)
+    st.rerun()
+
+
+def _render_login_page() -> None:
+    st.markdown(
+        """
+        <style>
+            [data-testid="stSidebar"] {display: none;}
+            [data-testid="stSidebarCollapsedControl"] {display: none;}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
     st.title("AI Candidate Search")
+    st.caption("Sign in to search candidates and save your history.")
+
+    _, center, _ = st.columns([1, 2, 1])
+    with center:
+        login_tab, signup_tab = st.tabs(["Log in", "Create account"])
+
+        with login_tab:
+            with st.form("login_form"):
+                username = st.text_input("Username")
+                password = st.text_input("Password", type="password")
+                submitted = st.form_submit_button("Log in", type="primary")
+            if submitted:
+                try:
+                    user = login_user(username, password)
+                    st.session_state["user"] = {"id": user.id, "username": user.username}
+                    st.rerun()
+                except AuthError as exc:
+                    st.error(exc.message)
+
+        with signup_tab:
+            with st.form("signup_form"):
+                new_username = st.text_input("Choose a username")
+                new_password = st.text_input("Choose a password", type="password")
+                confirm = st.text_input("Confirm password", type="password")
+                created = st.form_submit_button("Create account", type="primary")
+            if created:
+                if new_password != confirm:
+                    st.error("Passwords do not match.")
+                else:
+                    try:
+                        user = register_user(new_username, new_password)
+                        st.session_state["user"] = {"id": user.id, "username": user.username}
+                        st.rerun()
+                    except AuthError as exc:
+                        st.error(exc.message)
+
+
+def _render_history_tab(user_id: int) -> None:
+    summaries = list_searches(user_id)
+    if not summaries:
+        st.info("No saved searches yet. Run a search to store history and results here.")
+        return
+
+    options = {
+        f"#{item.id} · {item.created_at.strftime('%Y-%m-%d %H:%M')} · "
+        f"{item.filename or item.source} · {item.candidates_found} profiles": item.id
+        for item in summaries
+    }
+    selected_label = st.selectbox("Saved searches", list(options.keys()))
+    if not selected_label:
+        return
+    if st.button("Load selected search", type="secondary"):
+        loaded = load_search(user_id, options[selected_label])
+        if loaded is None:
+            st.error("Could not load that search.")
+            return
+        st.session_state["search_result"] = loaded
+        st.rerun()
+
+
+def _render_search_tab(settings, serpapi_key: str, user_id: int) -> None:
     st.caption(
         "Upload a Job Description (PDF, Word, or text) or paste the JD to extract "
         "requirements, generate X-Ray queries, and discover LinkedIn profiles via Google search."
     )
-
-    with st.sidebar:
-        st.header("API Keys")
-        st.write(f"Mistral: {'✅' if settings.mistral_configured else '❌ Not configured'}")
-        serpapi_key = st.text_input(
-            "Your SerpApi Key",
-            type="password",
-            placeholder="Enter SerpApi key",
-            help="Required for Google search. Your key is used only for this session.",
-        )
-        st.divider()
-        st.markdown("**Limits**")
-        st.write(f"Max queries per JD: {settings.max_queries_per_jd}")
-        st.write(f"Max results per query: {settings.max_results_per_query}")
 
     source = st.radio(
         "Job description source",
@@ -227,11 +325,13 @@ def main() -> None:
                         filename=uploaded.name,
                         serpapi_key=serpapi_key.strip(),
                     )
+                    history_source = "file"
                 else:
                     result = _run_pipeline_from_text(
                         pasted_text,
                         serpapi_key=serpapi_key.strip(),
                     )
+                    history_source = "text"
                 st.session_state["search_result"] = result
             except AppError as exc:
                 logger.error("Pipeline error: %s", exc.message)
@@ -242,42 +342,66 @@ def main() -> None:
                 st.error("Something went wrong. Please try again.")
                 return
 
-    result = st.session_state.get("search_result")
-    if not result:
+        try:
+            save_search(user_id, result, source=history_source)
+        except Exception:
+            logger.exception("Failed to save search history")
+            st.warning("Search completed, but history could not be saved.")
+
+
+def main() -> None:
+    try:
+        init_db()
+    except DatabaseError as exc:
+        st.error(exc.message)
+        st.info(
+            "Set DATABASE_URL to a free Neon or Supabase Postgres URL, "
+            "or use the default SQLite path for local runs."
+        )
+        return
+    except Exception:
+        logger.exception("Database initialization failed")
+        st.error("Could not initialize the database. Check DATABASE_URL.")
         return
 
-    st.divider()
-    st.subheader("Search Summary")
-    summary_col1, summary_col2, summary_col3 = st.columns(3)
-    summary_col1.metric("Searches used", result.get("searches_run", 0))
-    summary_col2.metric("Unique profiles", result.get("candidates_found", 0))
-    summary_col3.metric("Raw results", len(result.get("search_results") or []))
+    user = _current_user()
+    if user is None:
+        _render_login_page()
+        return
 
-    with st.expander("JD Summary", expanded=True):
-        _render_requirements(result.get("requirements") or {})
+    settings = get_settings()
 
-    with st.expander("Generated X-Ray Queries", expanded=False):
-        _render_queries(result.get("queries") or [])
+    st.title("AI Candidate Search")
 
-    candidates = result.get("candidates") or []
-    st.subheader("Candidate Results")
-    st.write(f"**{result.get('candidates_found', 0)} candidates found**")
+    with st.sidebar:
+        st.header("Account")
+        st.write(f"Signed in as **{user['username']}**")
+        if st.button("Log out"):
+            _logout()
 
-    if candidates:
-        df = _candidates_dataframe(candidates)
-        st.dataframe(df, use_container_width=True, hide_index=True)
-
-        csv_buffer = StringIO()
-        df.to_csv(csv_buffer, index=False)
-        st.download_button(
-            label="Download candidates table (CSV)",
-            data=csv_buffer.getvalue(),
-            file_name="candidates.csv",
-            mime="text/csv",
-            type="secondary",
+        st.divider()
+        st.header("API Keys")
+        st.write(f"Mistral: {'✅' if settings.mistral_configured else '❌ Not configured'}")
+        serpapi_key = st.text_input(
+            "Your SerpApi Key",
+            type="password",
+            placeholder="Enter SerpApi key",
+            help="Required for Google search. Your key is used only for this session.",
         )
+        st.divider()
+        st.markdown("**Limits**")
+        st.write(f"Max queries per JD: {settings.max_queries_per_jd}")
+        st.write(f"Max results per query: {settings.max_results_per_query}")
 
-    _render_candidates(candidates)
+    search_tab, history_tab = st.tabs(["New Search", "Search History"])
+    with search_tab:
+        _render_search_tab(settings, serpapi_key, user["id"])
+    with history_tab:
+        _render_history_tab(user["id"])
+
+    result = st.session_state.get("search_result")
+    if result:
+        _render_result_section(result)
 
 
 if __name__ == "__main__":

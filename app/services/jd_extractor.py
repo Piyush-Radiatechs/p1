@@ -13,6 +13,7 @@ import httpx
 from app.config import Settings, get_settings
 from app.exceptions import JDExtractionError
 from app.models.jd import JobRequirements
+from app.utils.text_utils import merge_jd_locations
 
 logger = logging.getLogger(__name__)
 
@@ -25,9 +26,11 @@ Rules:
 - Never invent skills, titles, locations, or experience that are not supported by the text.
 - Identify realistic job-title variants based on the role described.
 - Separate must-have technical skills from preferred/nice-to-have skills.
-- Extract location requirements (city, state, region, remote/hybrid if stated).
+- Extract ALL work locations (city, state, AND country) that the candidate must be in or willing to cover.
+- Put the primary/base work location first. "US Based", "USA", "United States", Green Card, or US citizen means United States is the primary location.
+- Travel destinations (for example Canada and Mexico in a "willing to travel" clause) are extra locations — never replace the primary country with only the travel countries.
 - Extract experience range in years when mentioned.
-- Include common exclusion terms such as intern/fresher when the JD targets experienced hires.
+- When the JD targets experienced hires (for example 5+ or 8+ years), set experience.min_years and include exclusions: intern, internship, fresher, entry-level, trainee.
 - Return machine-readable JSON only — no markdown, no commentary.
 
 JSON schema:
@@ -101,7 +104,13 @@ async def extract_job_requirements(
 
     try:
         parsed = json.loads(_strip_json_fence(content))
-        return JobRequirements.model_validate(parsed)
+        requirements = JobRequirements.model_validate(parsed)
+        requirements.locations = merge_jd_locations(requirements.locations, jd_text)
+        min_years = requirements.experience.min_years if requirements.experience else None
+        if min_years is not None and min_years >= 3:
+            extra = ["intern", "internship", "fresher", "entry-level", "trainee"]
+            requirements.exclusions = list(dict.fromkeys(list(requirements.exclusions or []) + extra))
+        return requirements
     except json.JSONDecodeError as exc:
         raise JDExtractionError("Mistral returned malformed JSON.") from exc
     except Exception as exc:

@@ -5,7 +5,7 @@ not access LinkedIn directly — it generates site:linkedin.com/in/ X-Ray querie
 for use with SerpApi/Google.
 """
 
-from app.models.jd import JobRequirements
+from app.models.jd import ExperienceRange, JobRequirements
 from app.utils.text_utils import (
     build_or_group,
     expand_locations,
@@ -16,16 +16,34 @@ from app.utils.text_utils import (
 
 LINKEDIN_XRAY_SITE = "site:linkedin.com/in/"
 
+_JUNIOR_EXCLUSIONS = ("intern", "internship", "fresher", "entry-level", "trainee")
 
-def _build_exclusions(exclusions: list[str]) -> list[str]:
-    terms = exclusions or ["intern", "fresher"]
-    # Keep exclusions short; too many negatives can zero out Google results.
-    cleaned = []
+
+def _build_exclusions(exclusions: list[str], min_years: int | None) -> list[str]:
+    terms = list(exclusions or [])
+    if min_years is not None and min_years >= 3:
+        terms.extend(_JUNIOR_EXCLUSIONS)
+    if not terms:
+        terms = ["intern", "fresher"]
+    cleaned: list[str] = []
     for term in terms:
         simple = simplify_term(term, max_words=2).lower()
-        if simple:
-            cleaned.append(f"-{simple}")
-    return list(dict.fromkeys(cleaned))[:3]
+        if not simple:
+            continue
+        token = f'-"{simple}"' if " " in simple else f"-{simple}"
+        cleaned.append(token)
+    # Keep a few negatives; too many can zero out Google results.
+    return list(dict.fromkeys(cleaned))[:5]
+
+
+def _seniority_group(experience: ExperienceRange | None) -> str:
+    min_years = experience.min_years if experience else None
+    if min_years is None or min_years < 5:
+        return ""
+    terms = ["Senior", "Lead"]
+    if min_years >= 8:
+        terms.append("SME")
+    return build_or_group(terms)
 
 
 def _join_query_parts(parts: list[str]) -> str:
@@ -59,10 +77,13 @@ def generate_xray_queries(
     preferred = list(dict.fromkeys(s for s in preferred if s))
 
     locations = expand_locations(requirements.locations)
-    exclusions = _build_exclusions(requirements.exclusions)
+    min_years = requirements.experience.min_years if requirements.experience else None
+    exclusions = _build_exclusions(requirements.exclusions, min_years)
+    seniority = _seniority_group(requirements.experience)
 
     title_group = build_or_group(titles[:4])
-    location_group = build_or_group(locations[:4])
+    location_group = build_or_group(locations[:6])
+    primary_location = quote_phrase(locations[0]) if locations else ""
     # Prefer short skill tokens for better Google hit rates.
     core_skill_group = build_or_group(core_skills[:3])
     primary_skill = quote_phrase(core_skills[0]) if core_skills else ""
@@ -71,44 +92,59 @@ def generate_xray_queries(
 
     queries: list[str] = []
 
-    # Query 1: Title + primary skill + location (broader, higher hit rate)
+    # Query 1: Title + seniority + primary skill + all JD locations
     queries.append(
         _join_query_parts(
-            [LINKEDIN_XRAY_SITE, title_group, primary_skill, location_group, *exclusions]
+            [
+                LINKEDIN_XRAY_SITE,
+                title_group,
+                seniority,
+                primary_skill,
+                location_group,
+                *exclusions,
+            ]
         )
     )
 
-    # Query 2: Title + core skills + location
+    # Query 2: Title + core skills + all locations (no seniority, higher recall)
     queries.append(
         _join_query_parts(
             [LINKEDIN_XRAY_SITE, title_group, core_skill_group, location_group, *exclusions]
         )
     )
 
-    # Query 3: Skill-heavy (no title emphasis)
+    # Query 3: Skill-heavy, pinned to the primary work location
     queries.append(
         _join_query_parts(
-            [LINKEDIN_XRAY_SITE, skill_group, location_group, *exclusions]
+            [LINKEDIN_XRAY_SITE, skill_group, primary_location or location_group, *exclusions]
         )
     )
 
-    # Query 4: Alternate titles
+    # Query 4: Alternate titles + primary location
     if len(titles) > 1:
         alt_title = build_or_group(titles[1:4])
         queries.append(
             _join_query_parts(
-                [LINKEDIN_XRAY_SITE, alt_title, primary_skill, location_group, *exclusions]
+                [
+                    LINKEDIN_XRAY_SITE,
+                    alt_title,
+                    seniority,
+                    primary_skill,
+                    primary_location or location_group,
+                    *exclusions,
+                ]
             )
         )
 
-    # Query 5+: Single-location variants (broader than stacking all locations)
+    # Query 5+: Remaining single-location variants, primary location first
     if locations:
-        for loc in locations[:2]:
+        for loc in locations[:3]:
             queries.append(
                 _join_query_parts(
                     [
                         LINKEDIN_XRAY_SITE,
                         title_group,
+                        seniority,
                         primary_skill,
                         quote_phrase(loc),
                         *exclusions,
@@ -116,7 +152,7 @@ def generate_xray_queries(
                 )
             )
 
-    # Broader fallback: title + location only
+    # Broader fallback: title + all locations
     if title_group and location_group:
         queries.append(
             _join_query_parts(

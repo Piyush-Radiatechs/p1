@@ -43,7 +43,27 @@ MISTRAL_MODEL=mistral-small-latest
 SERPAPI_KEY=your_serpapi_key
 MAX_QUERIES_PER_JD=5
 MAX_RESULTS_PER_QUERY=10
+DATABASE_URL=sqlite:///./data/app.db
 ```
+
+## Database (free)
+
+Login credentials, search history, and candidate result tables are stored in a database.
+
+- **Local:** SQLite at `data/app.db` (created automatically, no extra setup).
+- **Hosted (Streamlit Cloud):** SQLite files are wiped on restart. Use a free Postgres database instead:
+
+1. Create a project at [Neon](https://console.neon.tech) (free tier).
+2. Copy the connection string.
+3. Put it in `.env` locally, or in Streamlit Cloud **Secrets**:
+
+```toml
+DATABASE_URL = "postgresql://USER:PASSWORD@HOST/dbname?sslmode=require"
+```
+
+[Supabase](https://supabase.com) Postgres also works with the same `DATABASE_URL` setting.
+
+Passwords are stored as bcrypt hashes, never as plain text.
 
 ## Run Streamlit UI
 
@@ -103,6 +123,7 @@ MAX_RESULTS_PER_QUERY = 10
 GOOGLE_DOMAIN = "google.com"
 GOOGLE_GL = "us"
 GOOGLE_HL = "en"
+DATABASE_URL = "postgresql://USER:PASSWORD@HOST/dbname?sslmode=require"
 ```
 
 Then reboot the app. SerpApi can stay as a sidebar input, or you can also add `SERPAPI_KEY` here.

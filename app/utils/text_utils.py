@@ -1,6 +1,47 @@
 import re
 
-_COUNTRY_ONLY = {"us", "usa", "u.s.", "u.s.a.", "united states", "india", "uk", "u.k."}
+_LINKEDIN_TITLE_SUFFIX = re.compile(r"\s*[|\-–—]\s*LinkedIn.*$", re.IGNORECASE)
+
+_COUNTRY_NORMALIZE = {
+    "us": "United States",
+    "usa": "United States",
+    "u.s.": "United States",
+    "u.s.a.": "United States",
+    "u.s.a": "United States",
+    "united states": "United States",
+    "united states of america": "United States",
+    "uk": "United Kingdom",
+    "u.k.": "United Kingdom",
+    "u.k": "United Kingdom",
+    "united kingdom": "United Kingdom",
+}
+
+_COUNTRY_FROM_TEXT = (
+    (re.compile(r"\b(united states of america|united states|u\.s\.a\.?|usa)\b", re.I), "United States"),
+    (re.compile(r"\bus[-\s]?based\b", re.I), "United States"),
+    (re.compile(r"\bgreen cards?\b", re.I), "United States"),
+    (re.compile(r"\bu\.?s\.?\s+citizens?\b", re.I), "United States"),
+    (re.compile(r"\bcanada\b", re.I), "Canada"),
+    (re.compile(r"\bmexico\b", re.I), "Mexico"),
+    (re.compile(r"\bindia\b", re.I), "India"),
+    (re.compile(r"\b(united kingdom|u\.k\.)\b", re.I), "United Kingdom"),
+)
+
+_US_PRIMARY_RE = re.compile(
+    r"\b(us[-\s]?based|united states|u\.s\.a\.?|\busa\b|green cards?|u\.?s\.?\s+citizens?|"
+    r"location\s*:\s*(?:the\s+)?(?:usa|u\.s\.a\.?|u\.s\.|us)\b)",
+    re.I,
+)
+
+
+def display_name_from_title(title: str) -> str:
+    if not title:
+        return "Unknown"
+    cleaned = _LINKEDIN_TITLE_SUFFIX.sub("", title)
+    for sep in [" | ", " – ", " — ", " - "]:
+        if sep in cleaned:
+            return cleaned.split(sep)[0].strip()
+    return cleaned.strip() or "Unknown"
 
 
 def normalize_whitespace(text: str) -> str:
@@ -30,15 +71,40 @@ def quote_phrase(term: str) -> str:
 
 
 def expand_locations(locations: list[str]) -> list[str]:
-    """Split 'Texas, US' into usable place names; drop country-only tokens."""
+    """Split location strings into search terms and keep stated countries.
+
+    'Texas, US' becomes Texas + United States. A JD that only says USA keeps
+    United States instead of dropping the country as too broad.
+    """
     expanded: list[str] = []
     for loc in locations:
-        parts = [normalize_whitespace(p) for p in re.split(r"[,/|]", loc) if p.strip()]
+        parts = [
+            normalize_whitespace(p)
+            for p in re.split(r"[,/|&]| and ", loc, flags=re.IGNORECASE)
+            if p.strip()
+        ]
         for part in parts:
-            if part.lower() in _COUNTRY_ONLY:
-                continue
-            expanded.append(part)
-    return list(dict.fromkeys(expanded))
+            key = part.lower().rstrip(".")
+            expanded.append(_COUNTRY_NORMALIZE.get(key, part))
+    return list(dict.fromkeys(p for p in expanded if p))
+
+
+def locations_from_jd_text(jd_text: str) -> list[str]:
+    """Pull country names actually mentioned in the JD text."""
+    found: list[str] = []
+    for pattern, label in _COUNTRY_FROM_TEXT:
+        if pattern.search(jd_text or ""):
+            found.append(label)
+    return list(dict.fromkeys(found))
+
+
+def merge_jd_locations(extracted: list[str], jd_text: str) -> list[str]:
+    """Keep extractor locations and add any countries the JD text clearly states."""
+    merged = list(dict.fromkeys(expand_locations(extracted) + locations_from_jd_text(jd_text)))
+    if _US_PRIMARY_RE.search(jd_text or ""):
+        rest = [loc for loc in merged if loc.lower() not in {"united states", "usa", "us"}]
+        merged = ["United States", *rest]
+    return merged
 
 
 def build_or_group(terms: list[str]) -> str:
