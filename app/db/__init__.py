@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool, StaticPool
 
 from app.config import get_settings
-from app.db.models import Base, Search, SearchResult, User
+from app.db.models import AccountRequest, Base, Search, SearchResult, User
 from app.exceptions import DatabaseError
 
 logger = logging.getLogger(__name__)
@@ -122,6 +122,7 @@ def session_scope() -> Generator[Session, None, None]:
 
 
 __all__ = [
+    "AccountRequest",
     "Base",
     "Search",
     "SearchResult",

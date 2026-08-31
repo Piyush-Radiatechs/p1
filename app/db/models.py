@@ -64,3 +64,17 @@ class SearchResult(Base):
     found_in_queries: Mapped[list] = mapped_column(JSON, default=list)
 
     search: Mapped["Search"] = relationship(back_populates="results")
+
+
+class AccountRequest(Base):
+    """Signup request waiting for admin approval. Existing users are not modified."""
+
+    __tablename__ = "account_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    username: Mapped[str] = mapped_column(String(32), index=True)
+    password_hash: Mapped[str] = mapped_column(String(128))
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utc_now)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reviewed_by: Mapped[str | None] = mapped_column(String(32), nullable=True)

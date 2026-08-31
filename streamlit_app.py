@@ -14,7 +14,16 @@ import streamlit as st
 from app.config import get_settings
 from app.db import init_db
 from app.exceptions import AppError, AuthError, DatabaseError
-from app.services.auth_service import login_user, register_user
+from app.services.auth_service import (
+    approve_account_request,
+    is_admin,
+    list_account_requests,
+    list_users,
+    login_user,
+    reject_account_request,
+    request_account,
+    reset_user_password,
+)
 from app.services.history_service import list_searches, load_search, save_search
 from app.services.pipeline import process_jd_file, process_jd_text
 from app.utils.text_utils import display_name_from_title
@@ -207,11 +216,11 @@ def _render_login_page() -> None:
         unsafe_allow_html=True,
     )
     st.title("AI Candidate Search")
-    st.caption("Sign in to search candidates and save your history.")
+    st.caption("Sign in if you already have access, or request an account for admin approval.")
 
     _, center, _ = st.columns([1, 2, 1])
     with center:
-        login_tab, signup_tab = st.tabs(["Log in", "Create account"])
+        login_tab, request_tab = st.tabs(["Log in", "Request access"])
 
         with login_tab:
             with st.form("login_form"):
@@ -226,22 +235,96 @@ def _render_login_page() -> None:
                 except AuthError as exc:
                     st.error(exc.message)
 
-        with signup_tab:
+        with request_tab:
+            st.caption("An admin must approve your request before you can log in.")
             with st.form("signup_form"):
                 new_username = st.text_input("Choose a username")
                 new_password = st.text_input("Choose a password", type="password")
                 confirm = st.text_input("Confirm password", type="password")
-                created = st.form_submit_button("Create account", type="primary")
-            if created:
+                requested = st.form_submit_button("Submit request", type="primary")
+            if requested:
                 if new_password != confirm:
                     st.error("Passwords do not match.")
                 else:
                     try:
-                        user = register_user(new_username, new_password)
-                        st.session_state["user"] = {"id": user.id, "username": user.username}
+                        request_account(new_username, new_password)
+                        st.success(
+                            "Request submitted. You can log in after an admin approves it."
+                        )
+                    except AuthError as exc:
+                        st.error(exc.message)
+
+
+def _render_admin_dashboard(admin_username: str) -> None:
+    st.caption("View users, reset passwords, and approve account requests. Passwords are never shown.")
+
+    pending = list_account_requests(admin_username, status="pending")
+    st.subheader(f"Pending requests ({len(pending)})")
+    if not pending:
+        st.info("No account requests waiting for review.")
+    else:
+        for item in pending:
+            requested = item.created_at.strftime("%Y-%m-%d %H:%M") if item.created_at else "—"
+            col_info, col_approve, col_reject = st.columns([4, 1, 1])
+            with col_info:
+                st.write(f"**{item.username}** · requested {requested}")
+            with col_approve:
+                if st.button("Approve", key=f"approve_{item.id}", type="primary"):
+                    try:
+                        approve_account_request(admin_username, item.id)
+                        st.success(f"Approved {item.username}. They can log in now.")
                         st.rerun()
                     except AuthError as exc:
                         st.error(exc.message)
+            with col_reject:
+                if st.button("Reject", key=f"reject_{item.id}"):
+                    try:
+                        reject_account_request(admin_username, item.id)
+                        st.warning(f"Rejected {item.username}.")
+                        st.rerun()
+                    except AuthError as exc:
+                        st.error(exc.message)
+
+    st.divider()
+    st.subheader("Users")
+    users = list_users(admin_username)
+    if not users:
+        st.info("No users found.")
+        return
+
+    rows = []
+    for item in users:
+        created = item.created_at.strftime("%Y-%m-%d %H:%M") if item.created_at else "—"
+        rows.append(
+            {
+                "Username": item.username,
+                "Role": "Admin" if is_admin(item.username) else "User",
+                "Created": created,
+                "Saved searches": item.search_count,
+            }
+        )
+    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+    st.markdown("**Reset password**")
+    reset_options = {f"{item.username} (id {item.id})": item.id for item in users}
+    selected = st.selectbox("Select user", list(reset_options.keys()))
+    with st.form("admin_reset_password"):
+        new_password = st.text_input("New password", type="password")
+        confirm = st.text_input("Confirm new password", type="password")
+        submitted = st.form_submit_button("Reset password", type="secondary")
+    if submitted:
+        if new_password != confirm:
+            st.error("Passwords do not match.")
+        elif selected:
+            try:
+                username = reset_user_password(
+                    admin_username,
+                    reset_options[selected],
+                    new_password,
+                )
+                st.success(f"Password reset for {username}.")
+            except AuthError as exc:
+                st.error(exc.message)
 
 
 def _render_history_tab(user_id: int) -> None:
@@ -393,11 +476,22 @@ def main() -> None:
         st.write(f"Max queries per JD: {settings.max_queries_per_jd}")
         st.write(f"Max results per query: {settings.max_results_per_query}")
 
-    search_tab, history_tab = st.tabs(["New Search", "Search History"])
-    with search_tab:
-        _render_search_tab(settings, serpapi_key, user["id"])
-    with history_tab:
-        _render_history_tab(user["id"])
+    if is_admin(user["username"]):
+        admin_tab, search_tab, history_tab = st.tabs(
+            ["Admin", "New Search", "Search History"]
+        )
+        with admin_tab:
+            _render_admin_dashboard(user["username"])
+        with search_tab:
+            _render_search_tab(settings, serpapi_key, user["id"])
+        with history_tab:
+            _render_history_tab(user["id"])
+    else:
+        search_tab, history_tab = st.tabs(["New Search", "Search History"])
+        with search_tab:
+            _render_search_tab(settings, serpapi_key, user["id"])
+        with history_tab:
+            _render_history_tab(user["id"])
 
     result = st.session_state.get("search_result")
     if result:
