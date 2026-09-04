@@ -32,13 +32,13 @@ def _build_exclusions(exclusions: list[str], min_years: int | None) -> list[str]
             continue
         token = f'-"{simple}"' if " " in simple else f"-{simple}"
         cleaned.append(token)
-    # Keep a few negatives; too many can zero out Google results.
-    return list(dict.fromkeys(cleaned))[:5]
+    # Keep up to 3 high-impact negative tokens so Google does not penalize or zero out results
+    return list(dict.fromkeys(cleaned))[:3]
 
 
 def _seniority_group(experience: ExperienceRange | None) -> str:
     min_years = experience.min_years if experience else None
-    if min_years is None or min_years < 5:
+    if min_years is None or min_years < 4:
         return ""
     terms = ["Senior", "Lead"]
     if min_years >= 8:
@@ -66,7 +66,7 @@ def generate_xray_queries(
     requirements: JobRequirements,
     max_queries: int = 5,
 ) -> list[str]:
-    """Generate up to max_queries LinkedIn X-Ray search variants."""
+    """Generate up to max_queries distinct, recruiter-grade LinkedIn X-Ray queries."""
     titles = [simplify_term(t) for t in requirements.job_titles if t.strip()]
     titles = list(dict.fromkeys(t for t in titles if t))
 
@@ -81,83 +81,85 @@ def generate_xray_queries(
     exclusions = _build_exclusions(requirements.exclusions, min_years)
     seniority = _seniority_group(requirements.experience)
 
-    title_group = build_or_group(titles[:4])
-    location_group = build_or_group(locations[:6])
-    primary_location = quote_phrase(locations[0]) if locations else ""
-    # Prefer short skill tokens for better Google hit rates.
-    core_skill_group = build_or_group(core_skills[:3])
+    title_group = build_or_group(titles[:3]) if titles else ""
+    alt_titles = titles[1:4] if len(titles) > 1 else titles[:2]
+    alt_title_group = build_or_group(alt_titles) if alt_titles else title_group
+
+    primary_title = quote_phrase(titles[0]) if titles else ""
     primary_skill = quote_phrase(core_skills[0]) if core_skills else ""
-    all_skills = list(dict.fromkeys(core_skills + preferred))
-    skill_group = build_or_group(all_skills[:4])
+
+    # Locations: Separate target local/state regions from broad country names
+    target_locations = [
+        loc
+        for loc in locations
+        if loc.lower() not in {"united states", "usa", "us", "india", "united kingdom", "uk", "canada", "mexico"}
+    ]
+    target_loc_group = build_or_group(target_locations[:3]) if target_locations else build_or_group(locations[:3])
+    all_loc_group = build_or_group(locations[:4]) if locations else ""
+
+    sec_skills = core_skills[1:4]
+    sec_skill_group = build_or_group(sec_skills) if sec_skills else ""
+
+    niche_pool = core_skills[2:6] + preferred[:3]
+    niche_pool = list(dict.fromkeys(s for s in niche_pool if s and s != primary_skill))
+    niche_skill_group = build_or_group(niche_pool[:3]) if niche_pool else ""
 
     queries: list[str] = []
 
-    # Query 1: Title + seniority + primary skill + all JD locations
+    # 1. High Precision: Target Titles + Seniority + Primary Skill + Targeted Location
+    queries.append(
+        _join_query_parts(
+            [LINKEDIN_XRAY_SITE, title_group, seniority, primary_skill, target_loc_group or all_loc_group, *exclusions]
+        )
+    )
+
+    # 2. Tech Stack Specialist: Title Group + Primary Skill + Secondary Core Skills + Targeted Location
+    queries.append(
+        _join_query_parts(
+            [LINKEDIN_XRAY_SITE, title_group, primary_skill, sec_skill_group, target_loc_group or all_loc_group, *exclusions]
+        )
+    )
+
+    # 3. Alternative & Synonymous Titles: Alternative Titles + Primary Skill + All Locations (Broader)
+    queries.append(
+        _join_query_parts(
+            [LINKEDIN_XRAY_SITE, alt_title_group or title_group, primary_skill, all_loc_group, *exclusions]
+        )
+    )
+
+    # 4. Niche & Ecosystem Skills: Primary Title + Primary Skill + Niche Skills + Targeted Location
     queries.append(
         _join_query_parts(
             [
                 LINKEDIN_XRAY_SITE,
-                title_group,
-                seniority,
+                primary_title,
                 primary_skill,
-                location_group,
+                niche_skill_group or sec_skill_group,
+                target_loc_group or all_loc_group,
                 *exclusions,
             ]
         )
     )
 
-    # Query 2: Title + core skills + all locations (no seniority, higher recall)
+    # 5. High Recall Safety Net: Primary Title OR Primary Skill + All Locations
+    if primary_title and primary_skill:
+        broad_identifier = f"({primary_title} OR {primary_skill})"
+    else:
+        broad_identifier = primary_title or primary_skill or title_group
+
     queries.append(
         _join_query_parts(
-            [LINKEDIN_XRAY_SITE, title_group, core_skill_group, location_group, *exclusions]
+            [LINKEDIN_XRAY_SITE, broad_identifier, all_loc_group, *exclusions]
         )
     )
 
-    # Query 3: Skill-heavy, pinned to the primary work location
-    queries.append(
-        _join_query_parts(
-            [LINKEDIN_XRAY_SITE, skill_group, primary_location or location_group, *exclusions]
-        )
-    )
-
-    # Query 4: Alternate titles + primary location
-    if len(titles) > 1:
-        alt_title = build_or_group(titles[1:4])
-        queries.append(
-            _join_query_parts(
-                [
-                    LINKEDIN_XRAY_SITE,
-                    alt_title,
-                    seniority,
-                    primary_skill,
-                    primary_location or location_group,
-                    *exclusions,
-                ]
-            )
-        )
-
-    # Query 5+: Remaining single-location variants, primary location first
-    if locations:
+    # Fallbacks if locations have multiple individual cities/regions
+    if locations and len(queries) < max_queries:
         for loc in locations[:3]:
             queries.append(
                 _join_query_parts(
-                    [
-                        LINKEDIN_XRAY_SITE,
-                        title_group,
-                        seniority,
-                        primary_skill,
-                        quote_phrase(loc),
-                        *exclusions,
-                    ]
+                    [LINKEDIN_XRAY_SITE, title_group, primary_skill, quote_phrase(loc), *exclusions]
                 )
             )
-
-    # Broader fallback: title + all locations
-    if title_group and location_group:
-        queries.append(
-            _join_query_parts(
-                [LINKEDIN_XRAY_SITE, title_group, location_group, *exclusions]
-            )
-        )
 
     return _dedupe_queries(queries)[:max_queries]

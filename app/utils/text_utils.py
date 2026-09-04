@@ -48,16 +48,28 @@ def normalize_whitespace(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+_TRAILING_NOISE = re.compile(
+    r"\s+(?:development|programming|technologies|technology|tools|skills|solutions|services|integration|methodologies|concepts|management)$",
+    re.IGNORECASE,
+)
+_PAREN_ACRONYM = re.compile(r"\(([A-Za-z0-9\+\#]{2,8})\)")
+
+
 def simplify_term(term: str, max_words: int = 3) -> str:
     """Keep search terms short so Google X-Ray queries stay effective."""
-    cleaned = normalize_whitespace(term)
+    cleaned = normalize_whitespace(term).strip("\"'")
     if not cleaned:
         return ""
+    acronym_match = _PAREN_ACRONYM.search(cleaned)
+    if acronym_match:
+        return acronym_match.group(1)
+    cleaned = re.sub(r"[()[\]{}]", "", cleaned).strip()
+    cleaned = _TRAILING_NOISE.sub("", cleaned).strip()
     words = cleaned.split()
     if len(words) <= max_words:
         return cleaned
-    # Prefer product/core tokens over long descriptive phrases.
     return " ".join(words[:max_words])
+
 
 
 def quote_phrase(term: str) -> str:
