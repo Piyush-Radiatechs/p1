@@ -385,7 +385,11 @@ def _render_search_tab(settings, serpapi_key: str, user_id: int) -> None:
     )
 
     if search_clicked and has_input:
-        if not settings.llm_configured:
+        groq_configured = getattr(settings, "groq_configured", bool(getattr(settings, "groq_api_key", "").strip()))
+        mistral_configured = getattr(settings, "mistral_configured", bool(getattr(settings, "mistral_api_key", "").strip()))
+        llm_ready = getattr(settings, "llm_configured", False) or groq_configured or mistral_configured
+
+        if not llm_ready:
             st.error(
                 "Neither GROQ_API_KEY nor MISTRAL_API_KEY is configured. "
                 "Add GROQ_API_KEY to Streamlit Cloud Secrets (Manage app → Settings → Secrets) "
@@ -464,10 +468,15 @@ def main() -> None:
 
         st.divider()
         st.header("API Keys")
-        if settings.groq_configured:
-            st.write(f"LLM (Groq): ✅ `{settings.groq_model}`")
-        elif settings.mistral_configured:
-            st.write(f"LLM (Mistral): ✅ `{settings.mistral_model}`")
+        groq_configured = getattr(settings, "groq_configured", bool(getattr(settings, "groq_api_key", "").strip()))
+        mistral_configured = getattr(settings, "mistral_configured", bool(getattr(settings, "mistral_api_key", "").strip()))
+        groq_model = getattr(settings, "groq_model", "openai/gpt-oss-120b")
+        mistral_model = getattr(settings, "mistral_model", "mistral-small-latest")
+
+        if groq_configured:
+            st.write(f"LLM (Groq): ✅ `{groq_model}`")
+        elif mistral_configured:
+            st.write(f"LLM (Mistral): ✅ `{mistral_model}`")
         else:
             st.write("LLM: ❌ Not configured")
         serpapi_key = st.text_input(

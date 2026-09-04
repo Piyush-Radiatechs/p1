@@ -6,6 +6,7 @@ LinkedIn or any candidate profile data.
 
 import json
 import logging
+import os
 import re
 
 import httpx
@@ -61,16 +62,24 @@ async def extract_job_requirements(
     """Convert raw JD text into a validated JobRequirements model via Groq or Mistral."""
     settings = settings or get_settings()
 
-    if settings.groq_configured:
+    groq_api_key = getattr(settings, "groq_api_key", "").strip() or os.environ.get("GROQ_API_KEY", "").strip()
+    groq_model = getattr(settings, "groq_model", "openai/gpt-oss-120b") or os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
+    mistral_api_key = getattr(settings, "mistral_api_key", "").strip() or os.environ.get("MISTRAL_API_KEY", "").strip()
+    mistral_model = getattr(settings, "mistral_model", "mistral-small-latest") or os.environ.get("MISTRAL_MODEL", "mistral-small-latest")
+
+    groq_configured = getattr(settings, "groq_configured", bool(groq_api_key))
+    mistral_configured = getattr(settings, "mistral_configured", bool(mistral_api_key))
+
+    if groq_configured or groq_api_key:
         provider = "Groq"
         api_url = GROQ_CHAT_URL
-        api_key = settings.groq_api_key
-        model = settings.groq_model
-    elif settings.mistral_configured:
+        api_key = groq_api_key
+        model = groq_model
+    elif mistral_configured or mistral_api_key:
         provider = "Mistral"
         api_url = MISTRAL_CHAT_URL
-        api_key = settings.mistral_api_key
-        model = settings.mistral_model
+        api_key = mistral_api_key
+        model = mistral_model
     else:
         raise JDExtractionError("Neither GROQ_API_KEY nor MISTRAL_API_KEY is configured.")
 
