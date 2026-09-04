@@ -17,6 +17,7 @@ from app.utils.text_utils import merge_jd_locations
 
 logger = logging.getLogger(__name__)
 
+GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 MISTRAL_CHAT_URL = "https://api.mistral.ai/v1/chat/completions"
 
 SYSTEM_PROMPT = """You are a recruitment analyst. Extract structured job requirements from a job description.
@@ -57,17 +58,27 @@ async def extract_job_requirements(
     jd_text: str,
     settings: Settings | None = None,
 ) -> JobRequirements:
-    """Convert raw JD text into a validated JobRequirements model via Mistral."""
+    """Convert raw JD text into a validated JobRequirements model via Groq or Mistral."""
     settings = settings or get_settings()
 
-    if not settings.mistral_configured:
-        raise JDExtractionError("MISTRAL_API_KEY is not configured.")
+    if settings.groq_configured:
+        provider = "Groq"
+        api_url = GROQ_CHAT_URL
+        api_key = settings.groq_api_key
+        model = settings.groq_model
+    elif settings.mistral_configured:
+        provider = "Mistral"
+        api_url = MISTRAL_CHAT_URL
+        api_key = settings.mistral_api_key
+        model = settings.mistral_model
+    else:
+        raise JDExtractionError("Neither GROQ_API_KEY nor MISTRAL_API_KEY is configured.")
 
     if not jd_text.strip():
         raise JDExtractionError("Job description text is empty.")
 
     payload = {
-        "model": settings.mistral_model,
+        "model": model,
         "temperature": 0.1,
         "response_format": {"type": "json_object"},
         "messages": [
@@ -77,22 +88,22 @@ async def extract_job_requirements(
     }
 
     headers = {
-        "Authorization": f"Bearer {settings.mistral_api_key}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
 
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(MISTRAL_CHAT_URL, json=payload, headers=headers)
+            response = await client.post(api_url, json=payload, headers=headers)
     except httpx.TimeoutException as exc:
-        raise JDExtractionError("Mistral API request timed out.") from exc
+        raise JDExtractionError(f"{provider} API request timed out.") from exc
     except httpx.RequestError as exc:
-        raise JDExtractionError(f"Mistral API network error: {exc}") from exc
+        raise JDExtractionError(f"{provider} API network error: {exc}") from exc
 
     if response.status_code >= 400:
-        logger.error("Mistral API error %s: %s", response.status_code, response.text)
+        logger.error("%s API error %s: %s", provider, response.status_code, response.text)
         raise JDExtractionError(
-            f"Mistral API returned status {response.status_code}.",
+            f"{provider} API returned status {response.status_code}.",
             status_code=502,
         )
 
@@ -100,7 +111,7 @@ async def extract_job_requirements(
         data = response.json()
         content = data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
-        raise JDExtractionError("Unexpected Mistral API response format.") from exc
+        raise JDExtractionError(f"Unexpected {provider} API response format.") from exc
 
     try:
         parsed = json.loads(_strip_json_fence(content))
@@ -112,6 +123,6 @@ async def extract_job_requirements(
             requirements.exclusions = list(dict.fromkeys(list(requirements.exclusions or []) + extra))
         return requirements
     except json.JSONDecodeError as exc:
-        raise JDExtractionError("Mistral returned malformed JSON.") from exc
+        raise JDExtractionError(f"{provider} returned malformed JSON.") from exc
     except Exception as exc:
         raise JDExtractionError(f"Failed to validate extracted requirements: {exc}") from exc

@@ -17,6 +17,17 @@ def test_get_settings_reads_env(monkeypatch):
     os.environ.pop("MISTRAL_API_KEY", None)
 
 
+def test_get_settings_reads_groq_env(monkeypatch):
+    get_settings.cache_clear()
+    monkeypatch.setenv("GROQ_API_KEY", "test-groq-key")
+    settings = get_settings()
+    assert settings.groq_configured
+    assert settings.groq_api_key == "test-groq-key"
+    assert settings.llm_configured
+    get_settings.cache_clear()
+    os.environ.pop("GROQ_API_KEY", None)
+
+
 def test_postgres_url_is_normalized_for_sqlalchemy(monkeypatch):
     get_settings.cache_clear()
     monkeypatch.setenv(

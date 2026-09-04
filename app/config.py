@@ -5,6 +5,8 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _SECRET_ENV_KEYS = (
+    "GROQ_API_KEY",
+    "GROQ_MODEL",
     "MISTRAL_API_KEY",
     "MISTRAL_MODEL",
     "SERPAPI_KEY",
@@ -52,6 +54,9 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    groq_api_key: str = ""
+    groq_model: str = "openai/gpt-oss-120b"
+
     mistral_api_key: str = ""
     mistral_model: str = "mistral-small-latest"
 
@@ -72,8 +77,16 @@ class Settings(BaseSettings):
         return normalize_database_url(self.database_url)
 
     @property
+    def groq_configured(self) -> bool:
+        return bool(self.groq_api_key.strip())
+
+    @property
     def mistral_configured(self) -> bool:
         return bool(self.mistral_api_key.strip())
+
+    @property
+    def llm_configured(self) -> bool:
+        return self.groq_configured or self.mistral_configured
 
     @property
     def serpapi_configured(self) -> bool:

@@ -385,11 +385,11 @@ def _render_search_tab(settings, serpapi_key: str, user_id: int) -> None:
     )
 
     if search_clicked and has_input:
-        if not settings.mistral_configured:
+        if not settings.llm_configured:
             st.error(
-                "MISTRAL_API_KEY is not configured. "
-                "Add it to Streamlit Cloud Secrets (Manage app → Settings → Secrets) "
-                "or to a local .env file."
+                "Neither GROQ_API_KEY nor MISTRAL_API_KEY is configured. "
+                "Add GROQ_API_KEY to Streamlit Cloud Secrets (Manage app → Settings → Secrets) "
+                "or to your local .env file."
             )
             return
         if not serpapi_key.strip():
@@ -464,7 +464,12 @@ def main() -> None:
 
         st.divider()
         st.header("API Keys")
-        st.write(f"Mistral: {'✅' if settings.mistral_configured else '❌ Not configured'}")
+        if settings.groq_configured:
+            st.write(f"LLM (Groq): ✅ `{settings.groq_model}`")
+        elif settings.mistral_configured:
+            st.write(f"LLM (Mistral): ✅ `{settings.mistral_model}`")
+        else:
+            st.write("LLM: ❌ Not configured")
         serpapi_key = st.text_input(
             "Your SerpApi Key",
             type="password",

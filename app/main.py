@@ -32,7 +32,9 @@ async def health():
     settings = get_settings()
     return {
         "status": "ok",
+        "groq_configured": settings.groq_configured,
         "mistral_configured": settings.mistral_configured,
+        "llm_configured": settings.llm_configured,
         "serpapi_configured": settings.serpapi_configured,
     }
 
