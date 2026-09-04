@@ -59,6 +59,8 @@ async def process_jd_text(
     candidates = extract_candidates_from_results(
         search_results,
         drop_junior_titles=min_years is not None and min_years >= 3,
+        target_locations=requirements.locations,
+        strict_location=True,
     )
 
     return {

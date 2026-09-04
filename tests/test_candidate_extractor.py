@@ -80,3 +80,66 @@ def test_drop_junior_titles_from_results():
     kept = extract_candidates_from_results(results, drop_junior_titles=True)
     assert len(kept) == 1
     assert kept[0].linkedin_url == "https://www.linkedin.com/in/senior-fico"
+
+
+def test_strict_us_location_filtering():
+    results = [
+        {
+            "link": "https://www.linkedin.com/in/us-candidate-1",
+            "title": "Oracle Fusion Consultant",
+            "snippet": "Oracle Fusion Consultant. Charlotte, North Carolina, United States. 1K connections.",
+            "position": 1,
+            "query": "q1",
+        },
+        {
+            "link": "https://in.linkedin.com/in/india-subdomain",
+            "title": "Oracle Fusion Consultant",
+            "snippet": "Chennai, Tamil Nadu, India ...",
+            "position": 2,
+            "query": "q1",
+        },
+        {
+            "link": "https://www.linkedin.com/in/india-candidate-2",
+            "title": "Oracle Fusion Consultant",
+            "snippet": "Oracle Fusion Consultant. Bengaluru, Karnataka, India ...",
+            "position": 3,
+            "query": "q1",
+        },
+        {
+            "link": "https://www.linkedin.com/in/no-location-candidate",
+            "title": "Oracle Fusion Consultant",
+            "snippet": "I am an experienced consultant delivering solutions ...",
+            "position": 4,
+            "query": "q1",
+        },
+    ]
+    kept = extract_candidates_from_results(
+        results,
+        target_locations=["United States"],
+        strict_location=True,
+    )
+    assert len(kept) == 1
+    assert kept[0].linkedin_url == "https://www.linkedin.com/in/us-candidate-1"
+
+
+def test_drop_non_candidate_roles():
+    results = [
+        {
+            "link": "https://www.linkedin.com/in/tech-recruiter",
+            "title": "Senior Talent Acquisition Specialist | Recruiter",
+            "snippet": "Hiring Oracle Fusion consultants in United States",
+            "position": 1,
+            "query": "q1",
+        },
+        {
+            "link": "https://www.linkedin.com/in/real-dev",
+            "title": "Oracle Fusion Consultant",
+            "snippet": "Dallas, Texas, United States",
+            "position": 2,
+            "query": "q1",
+        },
+    ]
+    kept = extract_candidates_from_results(results, drop_non_candidates=True)
+    assert len(kept) == 1
+    assert kept[0].linkedin_url == "https://www.linkedin.com/in/real-dev"
+

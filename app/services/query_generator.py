@@ -81,6 +81,18 @@ def generate_xray_queries(
     exclusions = _build_exclusions(requirements.exclusions, min_years)
     seniority = _seniority_group(requirements.experience)
 
+    is_us_target = any(
+        loc.lower() in {"united states", "usa", "us", "u.s.", "u.s.a.", "us only", "usa only"}
+        or "united states" in loc.lower()
+        or "usa" in loc.lower()
+        for loc in locations
+    )
+    if is_us_target:
+        if "-India" not in exclusions:
+            exclusions.append("-India")
+    if "-recruiter" not in exclusions:
+        exclusions.append("-recruiter")
+
     title_group = build_or_group(titles[:3]) if titles else ""
     alt_titles = titles[1:4] if len(titles) > 1 else titles[:2]
     alt_title_group = build_or_group(alt_titles) if alt_titles else title_group
