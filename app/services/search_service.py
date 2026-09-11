@@ -4,6 +4,7 @@ COMPLIANCE: Search results come from Google via SerpApi. We only inspect returne
 search metadata (title, link, snippet). No LinkedIn pages are fetched or scraped.
 """
 
+import asyncio
 import logging
 from abc import ABC, abstractmethod
 
@@ -53,14 +54,27 @@ class SerpApiProvider(SearchProvider):
             "hl": self.settings.google_hl,
         }
 
-        try:
-            # Avoid logging full request URLs (they include the API key).
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.get(SERPAPI_URL, params=params)
-        except httpx.TimeoutException as exc:
-            raise SearchError("SerpApi request timed out.") from exc
-        except httpx.RequestError as exc:
-            raise SearchError(f"SerpApi network error: {exc}") from exc
+        timeout = httpx.Timeout(60.0, connect=20.0)
+        last_timeout: httpx.TimeoutException | None = None
+        response = None
+        for attempt in range(1, 4):
+            try:
+                # Avoid logging full request URLs (they include the API key).
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    response = await client.get(SERPAPI_URL, params=params)
+                break
+            except httpx.TimeoutException as exc:
+                last_timeout = exc
+                logger.warning("SerpApi timed out on attempt %s/3", attempt)
+                if attempt < 3:
+                    await asyncio.sleep(1.5 * attempt)
+            except httpx.RequestError as exc:
+                raise SearchError(f"SerpApi network error: {exc}") from exc
+        else:
+            raise SearchError("SerpApi request timed out.") from last_timeout
+
+        if response is None:
+            raise SearchError("SerpApi request timed out.") from last_timeout
 
         if response.status_code == 429:
             raise QuotaExceededError()

@@ -177,7 +177,7 @@ def _render_result_section(result: dict) -> None:
 
     if candidates:
         df = _candidates_dataframe(candidates)
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df, width="stretch", hide_index=True)
 
         csv_buffer = StringIO()
         df.to_csv(csv_buffer, index=False)
@@ -303,7 +303,7 @@ def _render_admin_dashboard(admin_username: str) -> None:
                 "Saved searches": item.search_count,
             }
         )
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
     st.markdown("**Reset password**")
     reset_options = {f"{item.username} (id {item.id})": item.id for item in users}

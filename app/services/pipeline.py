@@ -3,7 +3,7 @@
 import logging
 
 from app.config import Settings, get_settings
-from app.exceptions import AppError, JDExtractionError, QuotaExceededError
+from app.exceptions import AppError, JDExtractionError, QuotaExceededError, SearchError
 from app.services.candidate_extractor import extract_candidates_from_results
 from app.services.document_parser import extract_document_text
 from app.services.jd_extractor import extract_job_requirements
@@ -43,7 +43,13 @@ async def process_jd_text(
 
     try:
         for query in queries:
-            results = await search_provider.search(query)
+            try:
+                results = await search_provider.search(query)
+            except SearchError as exc:
+                if "timed out" in exc.message.lower():
+                    logger.warning("Skipping timed-out SerpApi query: %s", query[:160])
+                    continue
+                raise
             searches_run += 1
             for result in results:
                 search_results.append({**result, "query": query})
@@ -54,6 +60,11 @@ async def process_jd_text(
     except Exception as exc:
         logger.exception("Unexpected search error")
         raise AppError(f"Search failed: {exc}", status_code=502) from exc
+
+    if searches_run == 0:
+        raise SearchError(
+            "SerpApi request timed out. The key is fine — Google search was too slow. Please try again."
+        )
 
     min_years = requirements.experience.min_years if requirements.experience else None
     candidates = extract_candidates_from_results(
