@@ -18,6 +18,10 @@ def _skill_keywords(requirements: JobRequirements) -> list[str]:
     return list(dict.fromkeys(s for s in skills if s.strip()))
 
 
+def _title_keywords(requirements: JobRequirements) -> list[str]:
+    return list(dict.fromkeys(t for t in requirements.job_titles if t.strip()))
+
+
 def _skills_in_text(text: str, skills: list[str]) -> list[str]:
     normalized = _normalize(text)
     return [skill for skill in skills if _normalize(skill) in normalized]
@@ -50,15 +54,24 @@ def rank_candidates(
 ) -> list[RankedCandidate]:
     """Score and rank candidates by search-metadata relevance to JD requirements."""
     skills = _skill_keywords(requirements)
+    titles = _title_keywords(requirements)
     ranked: list[RankedCandidate] = []
 
     for candidate in candidates:
-        title_ratio, title_matches = _title_skill_score(candidate.title, skills)
+        title_skill_ratio, title_skill_matches = _title_skill_score(candidate.title, skills)
         snippet_ratio, snippet_matches = _snippet_skill_score(candidate.snippet, skills)
         repeat_ratio = _repeat_query_score(candidate.found_in_queries, max_queries)
+        role_ratio, role_matches = _title_skill_score(
+            f"{candidate.title} {candidate.snippet}", titles
+        )
 
-        match_score = round(title_ratio * 40 + snippet_ratio * 40 + repeat_ratio * 20)
-        matched_skills = list(dict.fromkeys(title_matches + snippet_matches))
+        match_score = round(
+            title_skill_ratio * 25
+            + snippet_ratio * 25
+            + role_ratio * 30
+            + repeat_ratio * 20
+        )
+        matched_skills = list(dict.fromkeys(title_skill_matches + snippet_matches + role_matches))
         missing_skills = [s for s in skills if s not in matched_skills]
 
         ranked.append(

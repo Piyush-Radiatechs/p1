@@ -82,6 +82,18 @@ def quote_phrase(term: str) -> str:
     return cleaned
 
 
+_LOCATION_TYPOS = {
+    "denvar": "Denver",
+}
+
+
+def _normalize_location_part(part: str) -> str:
+    key = part.lower().rstrip(".")
+    if key in _LOCATION_TYPOS:
+        return _LOCATION_TYPOS[key]
+    return _COUNTRY_NORMALIZE.get(key, part)
+
+
 def expand_locations(locations: list[str]) -> list[str]:
     """Split location strings into search terms and keep stated countries.
 
@@ -96,8 +108,7 @@ def expand_locations(locations: list[str]) -> list[str]:
             if p.strip()
         ]
         for part in parts:
-            key = part.lower().rstrip(".")
-            expanded.append(_COUNTRY_NORMALIZE.get(key, part))
+            expanded.append(_normalize_location_part(part))
     return list(dict.fromkeys(p for p in expanded if p))
 
 
@@ -112,6 +123,7 @@ def locations_from_jd_text(jd_text: str) -> list[str]:
 
 def merge_jd_locations(extracted: list[str], jd_text: str) -> list[str]:
     """Keep extractor locations and add any countries the JD text clearly states."""
+    jd_text = re.sub(r"\bdenvar\b", "Denver", jd_text or "", flags=re.IGNORECASE)
     merged = list(dict.fromkeys(expand_locations(extracted) + locations_from_jd_text(jd_text)))
     if _US_PRIMARY_RE.search(jd_text or ""):
         rest = [loc for loc in merged if loc.lower() not in {"united states", "usa", "us"}]

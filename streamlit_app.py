@@ -76,15 +76,15 @@ def _candidates_dataframe(candidates: list[dict]) -> pd.DataFrame:
     rows = []
     for candidate in candidates:
         title = candidate.get("title") or ""
-        rows.append(
-            {
-                "Name / Title": display_name_from_title(title),
-                "Search Title": title,
-                "LinkedIn URL": candidate.get("linkedin_url") or "",
-                "Snippet": candidate.get("snippet") or "",
-                "Found In Queries": "; ".join(candidate.get("found_in_queries") or []),
-            }
-        )
+        row = {
+            "Match %": candidate.get("match_score", 0),
+            "Name / Title": display_name_from_title(title),
+            "Search Title": title,
+            "LinkedIn URL": candidate.get("linkedin_url") or "",
+            "Snippet": candidate.get("snippet") or "",
+            "Found In Queries": "; ".join(candidate.get("found_in_queries") or []),
+        }
+        rows.append(row)
     return pd.DataFrame(rows)
 
 
@@ -157,13 +157,19 @@ def _render_candidates(candidates: list[dict]) -> None:
 def _render_result_section(result: dict) -> None:
     st.divider()
     st.subheader("Search Summary")
-    summary_col1, summary_col2, summary_col3 = st.columns(3)
+    summary_col1, summary_col2, summary_col3, summary_col4 = st.columns(4)
     summary_col1.metric("Searches used", result.get("searches_run", 0))
-    summary_col2.metric("Unique profiles", result.get("candidates_found", 0))
+    summary_col2.metric("LinkedIn profiles", result.get("linkedin_profiles_in_serp", result.get("candidates_found", 0)))
+    summary_col3.metric("After filters", result.get("candidates_found", 0))
     raw_count = result.get("raw_results_count")
     if raw_count is None:
         raw_count = len(result.get("search_results") or [])
-    summary_col3.metric("Raw results", raw_count)
+    summary_col4.metric("Raw SERP rows", raw_count)
+    filtered = result.get("profiles_filtered_by_location")
+    if filtered:
+        st.caption(
+            f"{filtered} profile(s) hidden by location rules (offshore / non-US LinkedIn domains)."
+        )
 
     with st.expander("JD Summary", expanded=True):
         _render_requirements(result.get("requirements") or {})

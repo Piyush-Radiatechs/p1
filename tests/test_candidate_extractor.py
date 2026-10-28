@@ -115,11 +115,31 @@ def test_strict_us_location_filtering():
     ]
     kept = extract_candidates_from_results(
         results,
-        target_locations=["United States"],
+        target_locations=["United States", "Denver"],
+        strict_location=True,
+    )
+    urls = {c.linkedin_url for c in kept}
+    assert "https://www.linkedin.com/in/us-candidate-1" in urls
+    assert "https://www.linkedin.com/in/no-location-candidate" in urls
+    assert "https://www.linkedin.com/in/india-candidate-2" not in urls
+
+
+def test_us_filter_keeps_denver_snippet_without_united_states():
+    results = [
+        {
+            "link": "https://www.linkedin.com/in/sap-basis-lead",
+            "title": "SAP Basis Architect",
+            "snippet": "SAP Basis Lead at Gates. Denver, Colorado area. 12 years SAP HANA.",
+            "position": 1,
+            "query": "q1",
+        },
+    ]
+    kept = extract_candidates_from_results(
+        results,
+        target_locations=["United States", "Denver"],
         strict_location=True,
     )
     assert len(kept) == 1
-    assert kept[0].linkedin_url == "https://www.linkedin.com/in/us-candidate-1"
 
 
 def test_drop_non_candidate_roles():

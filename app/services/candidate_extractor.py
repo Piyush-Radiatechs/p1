@@ -39,7 +39,6 @@ _NON_CANDIDATE_TITLE_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Known non-US LinkedIn country subdomains (e.g. in.linkedin.com -> India, uk.linkedin.com -> UK)
 _NON_US_SUBDOMAINS = frozenset(
     {
         "in", "uk", "ca", "au", "pk", "ae", "sg", "de", "fr", "nl", "es", "it", "br", "mx",
@@ -70,6 +69,22 @@ _US_STATE_CODES = frozenset(
     }
 )
 
+_COUNTRY_ONLY = frozenset(
+    {
+        "united states",
+        "usa",
+        "us",
+        "u.s.",
+        "u.s.a.",
+        "india",
+        "united kingdom",
+        "uk",
+        "canada",
+        "mexico",
+        "australia",
+    }
+)
+
 _US_LOCATION_MARKER_RE = re.compile(
     r"(?:location:\s*united states|,\s*united states|\bunited states\b|\bu\.s\.a\.?|\busa\b|"
     r"location\s*:\s*the\s+united\s+states|"
@@ -78,12 +93,11 @@ _US_LOCATION_MARKER_RE = re.compile(
     re.IGNORECASE,
 )
 
-_FOREIGN_LOCATION_RE = re.compile(
-    r"\b(india|pakistan|bangladesh|philippines|nigeria|dubai|uae|united arab emirates|saudi arabia|"
-    r"malaysia|singapore|australia|united kingdom|\buk\b|canada|mexico|germany|france|netherlands|"
-    r"chennai|bengaluru|bangalore|hyderabad|pune|mumbai|noida|gurgaon|gurugram|delhi|kolkata|"
-    r"ahmedabad|jaipur|coimbatore|kerala|tamil nadu|karnataka|telangana|andhra pradesh|maharashtra|"
-    r"secunderabad|lahore|karachi|islamabad|asia-pacific)\b",
+_OFFSHORE_PRIMARY_RE = re.compile(
+    r"\b(?:chennai|tamil nadu|bengaluru|bangalore|pune|mumbai|noida|gurgaon|gurugram|delhi|"
+    r"kolkata|hyderabad|ahmedabad|jaipur|coimbatore|kerala|karnataka|telangana|"
+    r"andhra pradesh|maharashtra|secunderabad|lahore|karachi|islamabad|"
+    r"manila|bangkok|jakarta|ho chi minh)\b",
     re.IGNORECASE,
 )
 
@@ -103,55 +117,91 @@ def is_us_target_location(locations: list[str] | None) -> bool:
     return False
 
 
+def _locality_tokens(locations: list[str] | None) -> list[str]:
+    """Cities/regions from the JD (e.g. Denver), excluding country-only tokens."""
+    tokens: list[str] = []
+    for loc in locations or []:
+        cleaned = (loc or "").strip()
+        if not cleaned:
+            continue
+        key = cleaned.lower()
+        if key in _COUNTRY_ONLY or key in _US_STATES:
+            continue
+        tokens.append(cleaned)
+    return list(dict.fromkeys(tokens))
+
+
 def is_non_candidate_profile_title(title: str) -> bool:
     """True when the search-result title is a recruiter, HR, or executive role."""
     return bool(_NON_CANDIDATE_TITLE_RE.search(title or ""))
 
 
-def is_verified_us_candidate(url: str, title: str, snippet: str) -> bool:
-    """Strictly verify whether candidate resides in the United States.
+def _linkedin_subdomain(url: str) -> str:
+    parsed = urlparse(url.strip())
+    host = (parsed.netloc or "").lower()
+    return host.split(".")[0] if "." in host else ""
 
-    Rules:
-    1. Reject non-US LinkedIn subdomains (e.g. in.linkedin.com, pk.linkedin.com).
-    2. Require positive evidence of US location in title or snippet.
-    3. Reject foreign location conflicts (e.g. candidate based in India or APAC).
+
+def _has_us_evidence(combined: str, locality_tokens: list[str]) -> bool:
+    if _US_LOCATION_MARKER_RE.search(combined):
+        return True
+    if any(re.search(rf"\b{re.escape(state)}\b", combined, re.IGNORECASE) for state in _US_STATES):
+        return True
+    for token in locality_tokens:
+        if re.search(rf"\b{re.escape(token)}\b", combined, re.IGNORECASE):
+            return True
+    return False
+
+
+def _is_clear_offshore_profile(combined: str) -> bool:
+    """Reject when snippet clearly places the person offshore without a US override."""
+    if not _OFFSHORE_PRIMARY_RE.search(combined):
+        return False
+    if re.search(
+        r"(?:location:\s*united states|,\s*(?:[A-Za-z\s]+,\s*)?united states|\bunited states\b)",
+        combined,
+        re.IGNORECASE,
+    ):
+        return False
+    if any(
+        re.search(rf"\b{re.escape(state)}\b", combined, re.IGNORECASE) for state in _US_STATES
+    ):
+        return False
+    return True
+
+
+def passes_us_location_filter(
+    url: str,
+    title: str,
+    snippet: str,
+    target_locations: list[str] | None,
+) -> bool:
+    """Filter US-target JDs without requiring every Google snippet to say 'United States'.
+
+    Rejects obvious non-US profiles; keeps US-confirmed and location-ambiguous hits.
     """
     if not url:
         return False
 
-    # Check URL subdomain
-    parsed = urlparse(url.strip())
-    host = (parsed.netloc or "").lower()
-    subdomain = host.split(".")[0] if "." in host else ""
+    subdomain = _linkedin_subdomain(url)
     if subdomain in _NON_US_SUBDOMAINS:
         return False
 
-    combined = f"{title} {snippet}"
+    combined = f"{title} {snippet}".strip()
+    locality_tokens = _locality_tokens(target_locations)
 
-    # Check for positive US location indicators
-    has_us_marker = bool(_US_LOCATION_MARKER_RE.search(combined))
-    has_us_state = any(re.search(rf"\b{state}\b", combined, re.IGNORECASE) for state in _US_STATES)
-
-    if not (has_us_marker or has_us_state):
+    if _is_clear_offshore_profile(combined):
         return False
 
-    # Check for foreign location conflicts
-    if _FOREIGN_LOCATION_RE.search(combined):
-        # Disqualify if the candidate's current location in snippet points to India / foreign hub
-        if re.search(
-            r"\b(?:chennai|tamil nadu|bengaluru|bangalore|pune|mumbai|noida|delhi|india pvt|asia-pacific)\b",
-            combined,
-            re.IGNORECASE,
-        ):
-            # Only allow if there is an unambiguous 'Location: United States' or ', [State], United States'
-            if not re.search(
-                r"(?:location:\s*united states|,\s*(?:[A-Za-z\s]+,\s*)?united states)",
-                combined,
-                re.IGNORECASE,
-            ):
-                return False
+    if _has_us_evidence(combined, locality_tokens):
+        return True
 
-    return True
+    # Google often omits location in the title/snippet — keep www profiles unless offshore.
+    if subdomain in {"", "www"} and not _OFFSHORE_PRIMARY_RE.search(combined):
+        return True
+
+    return False
+
 
 def normalize_linkedin_url(url: str) -> str | None:
     """Normalize a LinkedIn profile URL or return None if not a valid /in/ profile."""
@@ -176,19 +226,8 @@ def normalize_linkedin_url(url: str) -> str | None:
     if not LINKEDIN_PROFILE_PATTERN.match(url.strip()):
         return None
 
-    # Remove trailing slash and query parameters
     clean_path = path.rstrip("/") or path
-    normalized = urlunparse(
-        (
-            "https",
-            "www.linkedin.com",
-            clean_path,
-            "",
-            "",
-            "",
-        )
-    )
-    return normalized
+    return urlunparse(("https", "www.linkedin.com", clean_path, "", "", ""))
 
 
 def is_linkedin_profile_url(url: str) -> bool:
@@ -208,16 +247,9 @@ def extract_candidates_from_results(
     strict_location: bool = True,
     drop_non_candidates: bool = True,
 ) -> list[Candidate]:
-    """Filter search results to unique LinkedIn /in/ profile candidates.
-
-    Applies:
-    1. Valid LinkedIn /in/ profile normalization.
-    2. Junior title filtering (if requested).
-    3. Recruiter/Executive non-candidate filtering (drop_non_candidates=True).
-    4. Strict location verification (if target_locations specifies US / United States).
-    """
+    """Filter search results to unique LinkedIn /in/ profile candidates."""
     by_url: dict[str, Candidate] = {}
-    is_us = is_us_target_location(target_locations) if strict_location else False
+    filter_us = is_us_target_location(target_locations) if strict_location else False
 
     for result in search_results:
         link = result.get("link", "")
@@ -228,15 +260,13 @@ def extract_candidates_from_results(
         title = result.get("title") or ""
         snippet = result.get("snippet") or ""
 
-        # Drop recruiters, staffing managers, and executive/sales roles
         if drop_non_candidates and is_non_candidate_profile_title(title):
             continue
 
         if drop_junior_titles and is_junior_profile_title(title):
             continue
 
-        # Enforce strict US location verification if the JD targets US candidates
-        if is_us and not is_verified_us_candidate(link, title, snippet):
+        if filter_us and not passes_us_location_filter(link, title, snippet, target_locations):
             continue
 
         query = result.get("query", "")

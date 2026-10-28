@@ -153,7 +153,21 @@ def generate_xray_queries(
         )
     )
 
-    # 5. High Recall Safety Net: Primary Title OR Primary Skill + All Locations
+    # 5. High Recall: core title + skill with minimal negatives (Google snippets vary a lot)
+    light_exclusions = [e for e in exclusions if e in ("-intern", "-fresher", "-internship")][:2]
+    queries.append(
+        _join_query_parts(
+            [
+                LINKEDIN_XRAY_SITE,
+                primary_title or title_group,
+                primary_skill,
+                target_loc_group or all_loc_group,
+                *light_exclusions,
+            ]
+        )
+    )
+
+    # 6. Broad safety net: title OR primary skill + country/region
     if primary_title and primary_skill:
         broad_identifier = f"({primary_title} OR {primary_skill})"
     else:

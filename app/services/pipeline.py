@@ -5,6 +5,7 @@ import logging
 from app.config import Settings, get_settings
 from app.exceptions import AppError, JDExtractionError, QuotaExceededError, SearchError
 from app.services.candidate_extractor import extract_candidates_from_results
+from app.services.candidate_ranker import rank_candidates
 from app.services.document_parser import extract_document_text
 from app.services.jd_extractor import extract_job_requirements
 from app.services.query_generator import generate_xray_queries
@@ -67,12 +68,22 @@ async def process_jd_text(
         )
 
     min_years = requirements.experience.min_years if requirements.experience else None
+    extract_kwargs = {
+        "drop_junior_titles": min_years is not None and min_years >= 3,
+        "target_locations": requirements.locations,
+    }
+    candidates_relaxed = extract_candidates_from_results(
+        search_results,
+        **extract_kwargs,
+        strict_location=False,
+    )
     candidates = extract_candidates_from_results(
         search_results,
-        drop_junior_titles=min_years is not None and min_years >= 3,
-        target_locations=requirements.locations,
+        **extract_kwargs,
         strict_location=True,
     )
+    ranked = rank_candidates(candidates, requirements, max_queries=max(searches_run, 1))
+    ranked.sort(key=lambda c: (-c.match_score, c.best_position or 999))
 
     return {
         "filename": filename,
@@ -80,8 +91,10 @@ async def process_jd_text(
         "queries": queries,
         "searches_run": searches_run,
         "search_results": search_results,
-        "candidates_found": len(candidates),
-        "candidates": [c.model_dump() for c in candidates],
+        "linkedin_profiles_in_serp": len(candidates_relaxed),
+        "profiles_filtered_by_location": max(0, len(candidates_relaxed) - len(candidates)),
+        "candidates_found": len(ranked),
+        "candidates": [c.model_dump() for c in ranked],
     }
 
 
