@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 st.set_page_config(
-    page_title="AI Candidate Search",
+    page_title="AI Candidate Search Application",
     page_icon="🔍",
     layout="wide",
 )
